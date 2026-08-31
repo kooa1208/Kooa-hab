@@ -1,0 +1,177 @@
+-- =====================================================
+--  Yokai 完全同期 + 全員Nosure + アンチBan (検知されにくい版)
+-- =====================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
+
+-- ===== アンチBan =====
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    if getnamecallmethod() == "Kick" then return nil end
+    return oldNamecall(self, ...)
+end))
+
+-- 親が変わったら自動復帰
+LocalPlayer:GetPropertyChangedSignal("Parent"):Connect(function()
+    if LocalPlayer.Parent == nil then
+        task.wait(0.1)
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId)
+        end)
+    end
+end)
+
+-- ===== Yokaiモデルキャッシュ =====
+local yokaiModelCache = nil
+local ARM_NAMES = {"LeftArm", "RightArm", "LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm"}
+
+-- ===== 全員の名前をNosureに変更（毎フレーム） =====
+local function ForceNosureName(player)
+    if not player then return end
+    if player.DisplayName ~= "Nosure" then
+        player.DisplayName = "Nosure"
+    end
+    if player.Name ~= "Nosure" then
+        player.Name = "Nosure"
+    end
+end
+
+-- ===== Yokaiモデルを取得 =====
+local function GetYokaiModel()
+    if yokaiModelCache then return yokaiModelCache end
+    local success, model = pcall(function()
+        return Players:GetCharacterAppearanceAsync(62536494)
+    end)
+    if success and model then
+        yokaiModelCache = model
+        return model
+    end
+    return nil
+end
+
+-- ===== 髪の毛を消す =====
+local function RemoveHair(char)
+    for _, acc in ipairs(char:GetChildren()) do
+        if acc:IsA("Accessory") then
+            local handle = acc:FindFirstChild("Handle")
+            if handle then
+                local att = handle:FindFirstChildOfClass("Attachment")
+                if att and (string.find(att.Name, "Hair") or string.find(att.Name, "hair")) then
+                    acc:Destroy()
+                end
+            end
+        end
+    end
+end
+
+-- ===== 腕パーツをYokaiのものに変更 =====
+local function ApplyArmParts(char, modelClone)
+    for _, name in ipairs(ARM_NAMES) do
+        local yokaiPart = modelClone:FindFirstChild(name)
+        local charPart = char:FindFirstChild(name)
+        if yokaiPart and charPart and yokaiPart:IsA("BasePart") and charPart:IsA("BasePart") then
+            if charPart:IsA("MeshPart") and yokaiPart:IsA("MeshPart") then
+                charPart.MeshId = yokaiPart.MeshId
+                charPart.TextureID = yokaiPart.TextureID
+            end
+            charPart.Color = yokaiPart.Color
+            charPart.Material = yokaiPart.Material
+            charPart.Transparency = yokaiPart.Transparency
+        end
+    end
+end
+
+-- ===== メイン Yokai 適用 =====
+local function ApplyYokai(char)
+    if not char then return end
+
+    local model = GetYokaiModel()
+    if not model then
+        warn("❌ Yokaiモデル取得失敗")
+        return
+    end
+
+    -- シャツ/パンツを削除
+    for _, obj in pairs(char:GetChildren()) do
+        if obj:IsA("Shirt") or obj:IsA("Pants") or obj:IsA("ShirtGraphic") then
+            obj:Destroy()
+        end
+    end
+
+    RemoveHair(char)
+
+    -- Yokaiモデルをクローンして、アイテムを即座に装着
+    local modelClone = model:Clone()
+    for _, item in pairs(modelClone:GetChildren()) do
+        if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") then
+            item.Parent = char
+        elseif item:IsA("Accessory") then
+            local handle = item:FindFirstChild("Handle")
+            if handle then
+                handle.CanCollide = false
+                handle.Transparency = 0
+                local att = handle:FindFirstChildOfClass("Attachment")
+                if att then
+                    local charAtt = char:FindFirstChild(att.Name, true)
+                    if charAtt then
+                        local weld = Instance.new("Weld")
+                        weld.Part0 = handle
+                        weld.Part1 = charAtt.Parent
+                        weld.C0 = att.CFrame
+                        weld.C1 = charAtt.CFrame
+                        weld.Parent = handle
+                    end
+                end
+                item.Parent = char
+            end
+        end
+    end
+
+    ApplyArmParts(char, modelClone)
+
+    -- 再度髪の毛を消す（安全策）
+    RemoveHair(char)
+
+    print("✅ Yokai 適用完了")
+end
+
+-- ===== キャラクターがスポーンした時 =====
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.1)
+    ApplyYokai(char)
+end)
+
+-- ===== 現在のキャラクターにも適用 =====
+if LocalPlayer.Character then
+    ApplyYokai(LocalPlayer.Character)
+end
+
+-- ===== 毎フレームの処理（名前 + 検知されにくいスキン上書き） =====
+RunService.RenderStepped:Connect(function()
+    -- 全員の名前をNosureに変更
+    for _, plr in ipairs(Players:GetPlayers()) do
+        ForceNosureName(plr)
+    end
+
+    -- 自分のスキンの強制監視（サーバーが戻しても適用）
+    if LocalPlayer.Character then
+        for _, name in ipairs(ARM_NAMES) do
+            local part = LocalPlayer.Character:FindFirstChild(name)
+            if part and part:IsA("BasePart") then
+                part.Transparency = 0
+                part.Material = Enum.Material.SmoothPlastic
+            end
+        end
+    end
+end)
+
+-- ===== 事前キャッシュ取得 =====
+task.spawn(function()
+    GetYokaiModel()
+    print("✅ Yokai 事前キャッシュ取得成功")
+end)
+
+print("✅ Yokai + 全員Nosure + アンチBan 実行中")
